@@ -37,8 +37,27 @@
 
 | Name    | Description |
 | -------- | ------- |
-| `Check configuration`  | Check if the pellet stove is available via api   |
+| `Check configuration` | Passive diagnostic: problem when the latest coordinator update failed |
 | `Tank`  | Give the information if the pellet stove must be refill or not   |
+
+**Check configuration** now reports the health of the integration's existing
+coordinator updates, not the result of a stove configuration-check command.
+The legacy label was misleading; it is retained, along with the existing
+`<mac>_check_binary_sensor` unique ID, to avoid renaming entities or breaking
+existing dashboards, automations and history. No entity migration is needed.
+
+- **OK / off**: the latest coordinator update succeeded.
+- **Problem / on**: the latest coordinator update failed (including communication,
+  authentication or local update-processing errors). It stays available to show
+  the problem even while ordinary coordinator-backed entities are unavailable,
+  and returns to OK on the next successful update.
+- This diagnostic sends **no commands**, performs **no extra API reads**, and
+  never retries a timed-out command. Even a manual entity update is passive.
+  It only observes `coordinator.last_update_success`.
+- A successful cloud read is **not proof of fresh stove telemetry**, a working
+  command channel, a correct stove configuration, or safe appliance operation.
+  Cached/stale cloud data can still produce OK. This is connectivity/update
+  health, not telemetry-freshness or appliance-fault monitoring.
 
 ### Climate
 
