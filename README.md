@@ -130,6 +130,120 @@ Click on this button:
 </details>
 
 
+## Optional estimated pellet consumption (local experimental build)
+
+Disabled by default. In **Settings → Devices & services → Edilkamin → Configure**,
+check **Enable pellet estimate** and enter your own per-power P1–P5 rates in
+**kg/h**. Every rate is optional: leave blank for **unknown**. Zero, negative,
+non-numeric and non-finite values are rejected. There are **no default rates**
+and no universally applicable calibration. Saving options reloads this entry.
+
+When enabled, the existing stove device gains:
+
+- **Estimated pellet consumption**: a numeric cumulative kg sensor,
+  `weight` / `total_increasing`, initially **0 kg**, not lifetime hours × rates.
+- **Pellet estimate incomplete**: a diagnostic problem binary sensor, with a
+  `reasons` attribute. It turns on if a positive increment uses an unknown rate
+  (`pN_uncalibrated`), a counter decreases (`pN_counter_reset`), a calibration
+  boundary skips a gap (`calibration_gap`), or arithmetic overflows.
+  An unknown rate with **zero increment is fine**, including P4 and P5.
+
+For example, one owner's **provisional, appliance-specific** full-hopper refill
+calibration was P1 **0.81**, P2 **1.13**, P3 **1.15 kg/h**, with P4/P5 unknown.
+These are examples only, **not defaults or recommendations**; no such numbers
+are installed automatically. Weigh pellets and record hours between repeatable
+full-hopper refills to derive your own rates. Mixed-power runs and whole-hour
+rounding make calibration uncertain. This is **an estimate, not a fuel meter**.
+
+### Accounting boundaries and limitations
+
+- Reads `nvm.total_counters.p1_working_time` … `p5_working_time` from the
+  **existing device coordinator**, never from entity IDs, the current power
+  setting, service counters, or elapsed wall time. No additional API polling
+  or device commands are added. No Energy dashboard, kWh, or cost entities.
+- Each power starts at its **first valid reading after enabling**, which is a
+  baseline only. Subsequent positive integer hour increments add
+  `delta_hours × active_kg_per_hour`. Whole-hour counters give stepped readings;
+  no sub-hour interpolation or startup/shutdown fuel is estimated. Unit
+  verification is specific to the Pellkamin 10 evo plus, not all stove models.
+- Previous valid counters, numeric kg, settings and diagnostic reasons are saved
+  together in HA `.storage/edilkamin_pellet_<config_entry_id>`. Devices use
+  separate coordinators and stores. Every changed transaction is awaited and
+  read back from disk before being published; writes and option changes are
+  serialized. Cancelled refreshes drain their shielded disk transaction before
+  releasing the lock. Unloading closes the old estimator so a late refresh cannot
+  overwrite the replacement instance. Back up HA storage along with config.
+- Restarts, reloads and ordinary API/HA downtime with **unchanged enabled
+  settings** retain baselines and count recovered increments exactly once.
+  Store errors fail the coordinator update rather than publish unsaved totals;
+  a subsequent successful update can retry. Corrupt store data fails setup
+  instead of silently resetting history. Abrupt OS/storage failure can still
+  require restoring a backup; this is not a filesystem durability guarantee.
+- Missing/malformed counters are **not zero**. Each power retains its previous
+  valid baseline, so recovery can catch up with the same rate. The kg entity is
+  unavailable while any counter is invalid or the coordinator update fails;
+  the stored subtotal remains intact. A power missing at initial enable starts
+  only at its first valid reading, not at guessed historical hours. Diagnostic
+  `off` means no **detected** omitted increment, not verified complete telemetry.
+- A counter decrease adds **no consumption for that power**, preserves the kg
+  accumulated so far and establishes the decreased value as the next baseline.
+  Later positive increments count normally. The reset leaves a sticky problem
+  because usage across the reset cannot be reconstructed. A reset-and-rebound
+  hidden entirely between readings cannot be detected from cumulative hours.
+- **Calibration changes deliberately rebaseline, rather than settle via an
+  extra API call.** Existing kg is never repriced. All five baselines are
+  dropped and each power's first subsequent valid reading becomes its new
+  baseline. Thus usage since the last processed sample through that reading
+  is deliberately **unestimated** (possibly a long gap while offline).
+  `calibration_gap` stays on, even if there was in fact no usage. The Options
+  Flow persists this boundary before committing options, including when the
+  entry is unloaded; setup also reconciles persisted settings after a restart.
+- **Disabling** preserves kg and sticky reasons but drops baselines and removes
+  the new runtime entities. Re-enabling starts new baselines and never catches
+  up the disabled interval. Existing entity-registry entries may remain as
+  unavailable while disabled. Fractional hours straddling a boundary cannot be
+  separated by whole-hour counters: the next increment may include that
+  rounding fraction. Turning estimation off does not turn the stove off.
+- **Sticky means sticky:** adding a missing rate, resetting a stove counter,
+  restarting HA, or disabling/re-enabling does **not** clear diagnostic history.
+  There is intentionally no "clear problem" button pretending lost fuel was
+  recovered. To deliberately start a **new zero-based history**, stop HA, back
+  up and remove only this entry's `.storage/edilkamin_pellet_<config_entry_id>`,
+  then restart. This clears kg **and** reasons and starts fresh baselines; do
+  not do it just to hide an incomplete old total. The cumulative sensor's HA
+  statistics may retain the prior meter cycle; do not equate those statistics
+  with the newly reset native total. Never delete all of `.storage`.
+
+### Install this local ZIP on HA OS
+
+This build includes the working-hours baseline; it is not published to HACS.
+Back up `/config/custom_components/edilkamin` and the relevant HA storage first.
+Copy `ha-edilkamin-pellet-estimate.zip` to `/config`, then in your HA OS Terminal:
+
+```sh
+cd /config
+unzip -o ha-edilkamin-pellet-estimate.zip
+```
+
+The ZIP contains `custom_components/edilkamin/…` at its root (plus this README).
+Restart Home Assistant, then configure the existing integration entry; **do not
+remove and re-add it**. Existing working-hour entity identifiers are unchanged.
+A future HACS update can overwrite this unpublished local build. Roll back by
+restoring the backed-up integration directory and restarting HA. Preserve the
+pellet storage if you intend to resume its history later.
+
+### Offline verification
+
+Tests run against real HA 2025.5 classes, ConfigEntry, OptionsFlow, Store on a
+local filesystem, and actual sensor/binary-sensor EntityPlatform add/update/
+unavailable/recovery/removal. API fetches and command-capable existing platform
+forwarding are mocked. Coverage includes integer counter validation, arithmetic,
+unknown rates, resets, store restore, downtime, options boundaries, enable/disable,
+per-device isolation, serialized write/unload races and failed writes (including
+HA Store's logged-and-swallowed write errors). These are **offline integration
+and unit tests**, not a live HA OS or appliance test. Only synthetic fixtures
+are used. The installing user must verify Configure UI and readings on HA OS.
+
 ## Automations
 
 ### Send notification when the tank is empty

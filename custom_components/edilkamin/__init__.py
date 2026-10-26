@@ -12,6 +12,7 @@ from custom_components.edilkamin.api.edilkamin_async_api import EdilkaminAsyncAp
 
 from .const import DOMAIN, MAC_ADDRESS, PASSWORD, USERNAME
 from .coordinator import EdilkaminCoordinator
+from .pellet import PelletEstimate
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -38,6 +39,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coordinator = EdilkaminCoordinator(hass, username, password, mac_address)
 
+    coordinator.pellet = PelletEstimate(hass, entry.entry_id)
+    await coordinator.pellet.async_load(entry.options)
+
     # First refresh
     await coordinator.async_refresh()
 
@@ -49,7 +53,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass=hass,
         token_provider=coordinator.refresh_token,
     )
-    hass.data[DOMAIN]["coordinator"] = coordinator
+    hass.data[DOMAIN].setdefault("coordinators", {})[entry.entry_id] = coordinator
+    entry.async_on_unload(entry.add_update_listener(async_update_options))
     register_device(hass, entry, mac_address)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -59,9 +64,19 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
+        coordinator = hass.data[DOMAIN]["coordinators"].pop(entry.entry_id)
+        await coordinator.async_shutdown()
+        await coordinator.pellet.async_flush()
         hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
+
+
+async def async_update_options(hass, entry):
+    """Persist the option boundary before reloading entities."""
+    coordinator = hass.data[DOMAIN]["coordinators"][entry.entry_id]
+    await coordinator.pellet.async_configure(entry.options)
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 def register_device(hass: HomeAssistant, config_entry, mac_address):
